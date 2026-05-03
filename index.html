@@ -301,6 +301,7 @@
     transition: width 0.42s cubic-bezier(.2,.8,.2,1), opacity 0.3s;
     flex-shrink: 0;
     display: flex; flex-direction: column;
+    min-height: 0;
   }
   .side-panel.side-open { width: 290px; opacity: 1; }
   .side-panel.left.side-open { order: -1; }
@@ -322,6 +323,8 @@
   }
   .sp-x:hover { background: rgba(255,255,255,0.08); }
   .sp-body {
+    flex: 1;
+    min-height: 0;
     padding: 0 18px 18px;
     display: flex; flex-direction: column; gap: 22px;
     overflow-y: auto;
