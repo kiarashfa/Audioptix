@@ -91,6 +91,139 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ──────────────────────────────────────────────────────────────────────
+// Dynamic favicon — fixed palette, theme-independent.
+// • When idle/paused: static eighth-note monogram on dark ground.
+// • When playing: 5 frequency bars sampled from the shared analyser,
+//   throttled to ~12 fps to keep the cost negligible.
+const FAVICON = {
+  size: 32,             // canvas resolution (browsers display at 16, this gives HiDPI headroom)
+  bg:   '#0a0907',
+  fg:   '#e8c890',
+  bars: 5,
+  fps:  12
+};
+
+function drawFaviconMonogram(ctx, s) {
+  ctx.clearRect(0, 0, s, s);
+  // Rounded background tile
+  ctx.fillStyle = FAVICON.bg;
+  roundRect(ctx, 0, 0, s, s, s * 0.18); ctx.fill();
+  // Eighth note: head + stem + flag, scaled to the canvas
+  ctx.fillStyle = FAVICON.fg;
+  // Stem
+  const stemX = s * 0.55, stemTop = s * 0.20, stemBot = s * 0.66;
+  ctx.fillRect(stemX, stemTop, s * 0.07, stemBot - stemTop);
+  // Flag (a short curved sweep)
+  ctx.beginPath();
+  ctx.moveTo(stemX + s * 0.07, stemTop);
+  ctx.quadraticCurveTo(s * 0.86, stemTop + s * 0.10, s * 0.78, stemTop + s * 0.30);
+  ctx.quadraticCurveTo(s * 0.74, stemTop + s * 0.18, stemX + s * 0.07, stemTop + s * 0.16);
+  ctx.closePath();
+  ctx.fill();
+  // Note head (filled ellipse, slightly tilted)
+  ctx.save();
+  ctx.translate(stemX + s * 0.02, stemBot);
+  ctx.rotate(-0.35);
+  ctx.beginPath();
+  ctx.ellipse(0, 0, s * 0.20, s * 0.15, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawFaviconBars(ctx, s, levels) {
+  ctx.clearRect(0, 0, s, s);
+  ctx.fillStyle = FAVICON.bg;
+  roundRect(ctx, 0, 0, s, s, s * 0.18); ctx.fill();
+  ctx.fillStyle = FAVICON.fg;
+  const N = levels.length;
+  const pad = s * 0.16;
+  const inner = s - pad * 2;
+  const gap = inner * 0.08 / (N - 1);
+  const barW = (inner - gap * (N - 1)) / N;
+  const maxH = s - pad * 2;
+  const baseY = s - pad;
+  for (let i = 0; i < N; i++) {
+    const h = Math.max(s * 0.06, levels[i] * maxH);
+    const x = pad + i * (barW + gap);
+    roundRect(ctx, x, baseY - h, barW, h, Math.min(barW / 2, s * 0.06));
+    ctx.fill();
+  }
+}
+
+function useFavicon(analyser, isPlaying) {
+  const canvasRef = React.useRef(null);
+  const smoothRef = React.useRef(null);
+  const rafRef = React.useRef(null);
+  const lastDrawRef = React.useRef(0);
+
+  // Set up canvas once
+  if (!canvasRef.current && typeof document !== 'undefined') {
+    canvasRef.current = document.createElement('canvas');
+    canvasRef.current.width = FAVICON.size;
+    canvasRef.current.height = FAVICON.size;
+    smoothRef.current = new Float32Array(FAVICON.bars);
+  }
+
+  const pushToTab = React.useCallback(() => {
+    const link = document.getElementById('favicon');
+    if (!link || !canvasRef.current) return;
+    // PNG keeps the rounded corners crisp and is universally supported as a favicon
+    link.type = 'image/png';
+    link.href = canvasRef.current.toDataURL('image/png');
+  }, []);
+
+  React.useEffect(() => {
+    if (!canvasRef.current) return;
+    const ctx = canvasRef.current.getContext('2d');
+    const s = FAVICON.size;
+
+    // Always reset to monogram when not playing or no analyser yet
+    if (!isPlaying || !analyser) {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      drawFaviconMonogram(ctx, s);
+      pushToTab();
+      return;
+    }
+
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const usable = Math.floor(data.length * 0.78);
+    const frameInterval = 1000 / FAVICON.fps;
+
+    const loop = (ts) => {
+      rafRef.current = requestAnimationFrame(loop);
+      if (ts - lastDrawRef.current < frameInterval) return;
+      lastDrawRef.current = ts;
+
+      analyser.getByteFrequencyData(data);
+      const N = FAVICON.bars;
+      const levels = smoothRef.current;
+      for (let i = 0; i < N; i++) {
+        // Logarithmic frequency mapping, same shape as the main visualizer
+        const idx  = Math.floor(Math.pow(i / N, 1.6) * usable);
+        const idx2 = Math.min(usable - 1, Math.floor(Math.pow((i + 1) / N, 1.6) * usable));
+        let v = 0, c = 0;
+        for (let k = idx; k <= idx2; k++) { v += data[k]; c++; }
+        v = c ? v / c : 0;
+        let nv = Math.pow((v / 255) * 1.4, 0.85);
+        if (nv > 1) nv = 1;
+        // Asymmetric smoothing: rise fast, fall slow
+        const prev = levels[i];
+        levels[i] = nv > prev ? prev + (nv - prev) * 0.6 : prev + (nv - prev) * 0.25;
+      }
+      drawFaviconBars(ctx, s, levels);
+      pushToTab();
+    };
+
+    rafRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    };
+  }, [analyser, isPlaying, pushToTab]);
+}
+
 // Parse ID3 from a Blob → returns promise of {title, artist, album, year, cover}
 function readTags(blob) {
   return new Promise((resolve) => {
@@ -407,6 +540,9 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
 
   const current = currentIndex >= 0 && currentIndex < tracks.length ? tracks[currentIndex] : null;
+
+  // Dynamic tab favicon: monogram when idle, animated bars when playing.
+  useFavicon(analyser, isPlaying);
 
   useEffect(() => { if (analyserRef.current) analyserRef.current.smoothingTimeConstant = t.smoothing; }, [t.smoothing]);
   useEffect(() => { if (audioRef.current) audioRef.current.volume = muted ? 0 : volume; }, [volume, muted]);
