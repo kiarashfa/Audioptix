@@ -508,6 +508,56 @@
   }
   .mini-toggle.on i { transform: translateX(14px); }
 
+  /* ── About panel (drawer from the top) ──────── */
+  .top-panel {
+    width: min(1200px, 96vw);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    margin-bottom: 0;
+    flex-shrink: 0;
+    display: flex; flex-direction: column;
+    transition: max-height 0.42s cubic-bezier(.2,.8,.2,1), opacity 0.3s, margin-bottom 0.42s cubic-bezier(.2,.8,.2,1);
+  }
+  .top-panel.top-open { max-height: min(46vh, 400px); opacity: 1; margin-bottom: 14px; }
+  .about-body {
+    padding: 2px 18px 18px;
+    display: flex; flex-wrap: wrap; align-items: flex-start;
+    gap: 16px 28px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .about-text {
+    flex: 1 1 300px; min-width: 240px;
+    margin: 0;
+    font-size: 12px; line-height: 1.75; letter-spacing: 0.02em;
+  }
+  .about-links {
+    flex: 1 1 300px; min-width: 240px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .about-group {
+    display: flex; flex-direction: column;
+    gap: 7px;
+  }
+  .about-group-row {
+    display: flex; flex-wrap: wrap;
+    gap: 6px 8px;
+  }
+  .about-group-label {
+    font-size: 9px; letter-spacing: 0.22em; text-transform: uppercase;
+  }
+  .about-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 7px 12px; border-radius: 6px;
+    border: 0.5px solid;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    text-decoration: none;
+    transition: background 0.15s;
+  }
+  .about-chip:hover { background: rgba(255,255,255,0.05); }
+  .about-chip svg { width: 12px; height: 12px; fill: currentColor; flex-shrink: 0; }
+
   /* ── Footer ─────────────────────────────────── */
   .footer-caption {
     position: absolute;
