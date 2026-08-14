@@ -8,6 +8,8 @@ Press play and enjoy 🎵.
 
 ---
 
-© 2026 Kiarash Farajzadehahary
+© 2026 Kiarash Farajzadehahary.
+
+⚖ Licensed under the [KFA Source-Available License 1.0](LICENSE).
 
 Made with ❤️ for music lovers.
