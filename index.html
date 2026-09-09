@@ -3,15 +3,41 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Music Player</title>
+<title>AudiOptix, an evolving music visualizer</title>
+<meta name="description" content="A browser music player with a live audio-spectrum visualizer. Drop in your own MP3s, pick a theme, tune the bars. No uploads, no accounts, and your files never leave your device."/>
+<link rel="canonical" href="https://kiarashfa.github.io/audioptix/"/>
 
-<!-- Initial favicon: stylized eighth note on dark ground. Replaced at runtime
-     by the useFavicon hook in player.jsx (animated bars while playing). -->
-<link id="favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%230a0907'/><path d='M19 7v12.2a4.3 4.3 0 1 1-2-3.6V10l-6 1.6v9.6a4.3 4.3 0 1 1-2-3.6V9l10-2.6z' fill='%23e8c890'/></svg>"/>
+<!-- Tab icon. The useFavicon hook in player.jsx swaps this link's href for a live
+     canvas (animated bars while playing); favicon.svg is what shows until then. -->
+<link rel="icon" href="favicon/favicon.ico" sizes="32x32"/>
+<link id="favicon" rel="icon" type="image/svg+xml" href="favicon/favicon.svg"/>
+<link rel="apple-touch-icon" href="favicon/apple-touch-icon.png"/>
+<link rel="manifest" href="site.webmanifest"/>
+<!-- Single tag, kept in step with the theme picker from player.jsx. Matches
+     site.webmanifest theme_color and THEMES.noir.bg, the default theme. -->
+<meta name="theme-color" content="#0a0907"/>
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400;1,500;1,600&family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,700;1,6..96,400&family=DM+Serif+Display:ital@0;1&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<meta property="og:type" content="website"/>
+<meta property="og:site_name" content="AudiOptix"/>
+<meta property="og:url" content="https://kiarashfa.github.io/audioptix/"/>
+<meta property="og:title" content="AudiOptix, an evolving music visualizer"/>
+<meta property="og:description" content="A browser music player with a live audio-spectrum visualizer. Drop in your own MP3s, pick a theme, tune the bars. No uploads, no accounts, and your files never leave your device."/>
+<meta property="og:image" content="https://kiarashfa.github.io/audioptix/src/og.png"/>
+<meta property="og:image:width" content="1200"/>
+<meta property="og:image:height" content="630"/>
+<meta property="og:image:alt" content="The AudiOptix wordmark above a row of audio spectrum bars"/>
+<meta name="twitter:card" content="summary_large_image"/>
+<meta name="twitter:title" content="AudiOptix, an evolving music visualizer"/>
+<meta name="twitter:description" content="A browser music player with a live audio-spectrum visualizer. Drop in your own MP3s, pick a theme, tune the bars. No uploads, no accounts, and your files never leave your device."/>
+<meta name="twitter:image" content="https://kiarashfa.github.io/audioptix/src/og.png"/>
+
+<!-- Self-hosted fonts: no third-party font requests. See tools/fetch-fonts.mjs. -->
+<link rel="preload" as="font" type="font/woff2" href="fonts/jetbrains-mono/jetbrains-mono-400-normal-latin.woff2" crossorigin/>
+<link rel="preload" as="font" type="font/woff2" href="fonts/cormorant-garamond/cormorant-garamond-500-italic-latin.woff2" crossorigin/>
+<link rel="stylesheet" href="fonts/fonts.css"/>
+
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
 
 <style>
   *,*::before,*::after { box-sizing: border-box; }
@@ -227,6 +253,30 @@
     pointer-events: none;
   }
   .seek:hover .seek-knob { transform: translate(-50%, -50%) scale(1.15); }
+
+  /* Buffering: an indeterminate sweep along the seek bar while the next bytes
+     of a track are still arriving. Paired with the spinner on the play button. */
+  .seek.buffering::after {
+    content: '';
+    position: absolute; inset: 0;
+    border-radius: 999px;
+    background-image: linear-gradient(90deg, transparent 0%, var(--accent) 50%, transparent 100%);
+    background-size: 38% 100%;
+    background-repeat: no-repeat;
+    opacity: 0.55;
+    animation: seek-sweep 1.3s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes seek-sweep {
+    0%   { background-position: -38% 0; }
+    100% { background-position: 138% 0; }
+  }
+  .spin { animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin, .seek.buffering::after, .mini-wave span, .np-dot { animation: none; }
+  }
 
   /* ── Controls ───────────────────────────────── */
   .controls { display: flex; align-items: center; gap: 14px; }
@@ -557,6 +607,10 @@
   }
   .about-chip:hover { background: rgba(255,255,255,0.05); }
   .about-chip svg { width: 12px; height: 12px; fill: currentColor; flex-shrink: 0; }
+  .about-note {
+    margin: 0;
+    font-size: 10px; line-height: 1.7; letter-spacing: 0.04em;
+  }
 
   /* ── Footer ─────────────────────────────────── */
   .footer-caption {
@@ -587,11 +641,14 @@
 <body>
 <div id="root"></div>
 
-<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
-<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js"></script>
+<!-- Production builds, and player.jsx is transpiled ahead of time by
+     `npm run build` into player.js, so no in-browser Babel is shipped.
+     defer keeps all four off the critical path and preserves execution order. -->
+<script defer src="https://unpkg.com/react@18.3.1/umd/react.production.min.js" integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z" crossorigin="anonymous"></script>
+<script defer src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/jsmediatags/3.9.5/jsmediatags.min.js" integrity="sha384-JpTt7qxVx1X/pHeYiCfqFdKRu2HF1MBGr1kEXtbNIGwwryGWMbbW78onU3bdkAHZ" crossorigin="anonymous"></script>
+<script defer src="js/player.js"></script>
 
-<script type="text/babel" src="player.jsx"></script>
+<script async src="js/analytics.js"></script>
 </body>
 </html>

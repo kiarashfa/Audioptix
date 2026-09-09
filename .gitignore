@@ -1,0 +1,8 @@
+# environment variables
+.env
+.env.production
+
+# build tooling
+node_modules/
+tools/.fontcache/
+__pycache__/

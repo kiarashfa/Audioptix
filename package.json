@@ -1,0 +1,22 @@
+{
+  "name": "audioptix",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AudiOptix, an evolving music visualizer that runs entirely in your browser.",
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "build": "npm run js && npm run sitemap",
+    "js": "babel js/player.jsx --out-file js/player.js --presets @babel/preset-react --no-babelrc",
+    "sitemap": "node tools/make-sitemap.mjs",
+    "watch": "babel js/player.jsx --out-file js/player.js --presets @babel/preset-react --no-babelrc --watch",
+    "fonts": "node tools/fetch-fonts.mjs",
+    "icons": "python tools/make-icons.py",
+    "assets": "npm run fonts && npm run icons",
+    "check-links": "node tools/check-links.mjs"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.28.3",
+    "@babel/core": "^7.28.4",
+    "@babel/preset-react": "^7.27.1"
+  }
+}

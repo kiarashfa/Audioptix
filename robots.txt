@@ -1,0 +1,11 @@
+# AudiOptix
+# Note: on a GitHub Pages *project* site this file is served at
+# /audioptix/robots.txt, which crawlers do not read. They only read
+# https://kiarashfa.github.io/robots.txt, which lives in the kiarashfa.github.io
+# repo. This file is kept so it is already correct if a custom domain is added,
+# and the sitemap should be submitted through Google Search Console meanwhile.
+
+User-agent: *
+Allow: /
+
+Sitemap: https://kiarashfa.github.io/audioptix/sitemap.xml

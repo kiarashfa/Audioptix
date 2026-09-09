@@ -1,6 +1,18 @@
-// player.jsx — Music player (playlist, file picker, drag & drop, settings & about drawers)
+// player.jsx - AudiOptix (playlist, file picker, drag & drop, settings & about drawers)
 
 const { useState, useRef, useEffect, useCallback } = React;
+
+// Pinned, not derived from git: CI checkouts are shallow, so `git log --reverse`
+// there returns the newest commit and yields the wrong year. The first-commit
+// year is immutable anyway.
+const COPYRIGHT_START_YEAR = 2026;
+const COPYRIGHT_YEARS = (() => {
+  const now = new Date().getFullYear();
+  return now > COPYRIGHT_START_YEAR ? `${COPYRIGHT_START_YEAR}-${now}` : `${COPYRIGHT_START_YEAR}`;
+})();
+
+// Bundled tracks live here, described by music/tracks.json.
+const MUSIC_DIR = 'music/';
 
 const TWEAK_DEFAULTS = {
   theme: "noir",
@@ -92,7 +104,7 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Dynamic favicon — fixed palette, theme-independent.
+// Dynamic favicon: fixed palette, theme-independent.
 // • When idle/paused: static eighth-note monogram on dark ground.
 // • When playing: 5 frequency bars sampled from the shared analyser,
 //   throttled to ~12 fps to keep the cost negligible.
@@ -104,31 +116,30 @@ const FAVICON = {
   fps:  12
 };
 
+// The AudiOptix mark, flattened to a polygon in the 32x32 icon viewport.
+// Generated from tools/mark.py, so the tab icon, favicon.svg and the PNG icon
+// set are all cut from the same geometry.
+const MARK_POINTS = [19.0, 7.0, 19.0, 19.2, 18.9, 20.14, 18.6, 21.04, 18.12, 21.85, 17.46, 22.53, 16.68, 23.05, 15.79, 23.39, 14.86, 23.53, 13.92, 23.46, 13.01, 23.19, 12.19, 22.72, 11.49, 22.09, 10.94, 21.32, 10.58, 20.45, 10.41, 19.52, 10.45, 18.58, 10.7, 17.66, 11.14, 16.83, 11.75, 16.11, 12.5, 15.54, 13.36, 15.15, 14.29, 14.95, 15.23, 14.97, 16.15, 15.19, 17.0, 15.6, 17.0, 10.0, 11.0, 11.6, 11.0, 21.2, 10.9, 22.14, 10.6, 23.04, 10.12, 23.85, 9.46, 24.53, 8.68, 25.05, 7.79, 25.39, 6.86, 25.53, 5.92, 25.46, 5.01, 25.19, 4.19, 24.72, 3.49, 24.09, 2.94, 23.32, 2.58, 22.45, 2.41, 21.52, 2.45, 20.58, 2.7, 19.66, 3.14, 18.83, 3.75, 18.11, 4.5, 17.54, 5.36, 17.15, 6.29, 16.95, 7.23, 16.97, 8.15, 17.19, 9.0, 17.6, 9.0, 9.0, 19.0, 6.4];
+const MARK_INK = { x: 2.41, y: 6.4, w: 16.59, h: 19.13 };
+
 function drawFaviconMonogram(ctx, s) {
   ctx.clearRect(0, 0, s, s);
   // Rounded background tile
   ctx.fillStyle = FAVICON.bg;
   roundRect(ctx, 0, 0, s, s, s * 0.18); ctx.fill();
-  // Eighth note: head + stem + flag, scaled to the canvas
+  // Mark, ink-centred with ~13% padding to match favicon.ico
+  const pad = 0.13, box = s * (1 - pad * 2);
+  const k = Math.min(box / MARK_INK.w, box / MARK_INK.h);
+  const ox = s / 2 - (MARK_INK.x + MARK_INK.w / 2) * k;
+  const oy = s / 2 - (MARK_INK.y + MARK_INK.h / 2) * k;
   ctx.fillStyle = FAVICON.fg;
-  // Stem
-  const stemX = s * 0.55, stemTop = s * 0.20, stemBot = s * 0.66;
-  ctx.fillRect(stemX, stemTop, s * 0.07, stemBot - stemTop);
-  // Flag (a short curved sweep)
   ctx.beginPath();
-  ctx.moveTo(stemX + s * 0.07, stemTop);
-  ctx.quadraticCurveTo(s * 0.86, stemTop + s * 0.10, s * 0.78, stemTop + s * 0.30);
-  ctx.quadraticCurveTo(s * 0.74, stemTop + s * 0.18, stemX + s * 0.07, stemTop + s * 0.16);
+  for (let i = 0; i < MARK_POINTS.length; i += 2) {
+    const x = MARK_POINTS[i] * k + ox, y = MARK_POINTS[i + 1] * k + oy;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
   ctx.closePath();
   ctx.fill();
-  // Note head (filled ellipse, slightly tilted)
-  ctx.save();
-  ctx.translate(stemX + s * 0.02, stemBot);
-  ctx.rotate(-0.35);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, s * 0.20, s * 0.15, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
 }
 
 function drawFaviconBars(ctx, s, levels) {
@@ -224,7 +235,16 @@ function useFavicon(analyser, isPlaying) {
   }, [analyser, isPlaying, pushToTab]);
 }
 
-// Parse ID3 from a Blob → returns promise of {title, artist, album, year, cover}
+function pictureToDataUrl(picture) {
+  if (!picture) return null;
+  const { data, format } = picture;
+  const bytes = new Uint8Array(data);
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return `data:${format};base64,${btoa(bin)}`;
+}
+
+// Parse ID3 from a Blob, resolving to {title, artist, album, year, cover}
 function readTags(blob) {
   return new Promise((resolve) => {
     if (!window.jsmediatags) return resolve({});
@@ -232,20 +252,12 @@ function readTags(blob) {
       onSuccess: (tag) => {
         const tags = tag.tags || {};
         const year = tags.year || tags.TYER || tags.TDRC || (tags.TDRL && tags.TDRL.data) || '';
-        let cover = null;
-        if (tags.picture) {
-          const { data, format } = tags.picture;
-          const bytes = new Uint8Array(data);
-          let bin = '';
-          for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-          cover = `data:${format};base64,${btoa(bin)}`;
-        }
         resolve({
           title: tags.title || null,
           artist: tags.artist || null,
           album: tags.album || null,
           year: String(year || '').slice(0, 4),
-          cover
+          cover: pictureToDataUrl(tags.picture)
         });
       },
       onError: () => resolve({})
@@ -323,7 +335,7 @@ function Visualizer({ analyser, theme, barCount, sensitivity, mirror, barWidthPc
   );
 }
 
-// Decorative idle waveform shape — used for the top-right corner
+// Decorative idle waveform shape, used for the top-right corner
 function MiniWave({ theme, animated }) {
   const N = 24;
   return (
@@ -352,6 +364,7 @@ const Icon = {
   Gear: ({ size = 18 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>),
   Queue: ({ size = 18 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="14" y2="6"/><line x1="3" y1="12" x2="14" y2="12"/><line x1="3" y1="18" x2="11" y2="18"/><polygon points="17,15 22,18 17,21" fill="currentColor"/></svg>),
   Info: ({ size = 18 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>),
+  Spinner: ({ size = 22 }) => (<svg className="spin" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round"><path d="M12 3.2a8.8 8.8 0 1 0 8.8 8.8"/></svg>),
   Close: ({ size = 16 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>),
   Plus: ({ size = 14 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14"/></svg>),
   Trash: ({ size = 13 }) => (<svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>)
@@ -538,10 +551,10 @@ function AboutDrawer({ open, onClose, theme }) {
       </header>
       <div className="about-body">
         <p className="about-text" style={{ color: theme.dim }}>
-          <span style={{ color: theme.fg }}>AudiOptix</span> is a small music player with a live
-          audio-spectrum visualizer. Drop in your MP3s and watch them move — pick a theme, tune
-          the bars, and let it run. Everything happens right here in your browser: no servers,
-          no accounts, and your files never leave your device.
+          <span style={{ color: theme.fg }}>AudiOptix</span> is an evolving music visualizer.
+          Drop in your MP3s and watch them move: pick a theme, tune the bars, and let it run.
+          Everything happens right here in your browser: no uploads, no accounts, and your
+          files never leave your device.
         </p>
         <div className="about-links">
           <div className="about-group">
@@ -564,6 +577,16 @@ function AboutDrawer({ open, onClose, theme }) {
                 Buy Me a Coffee
               </a>
             </div>
+          </div>
+          <div className="about-group">
+            <span className="about-group-label" style={{ fontFamily: theme.metaFont, color: theme.dim }}>Credits</span>
+            <p className="about-note" style={{ fontFamily: theme.metaFont, color: theme.dim }}>
+              The bundled demo track was written and produced by Kiarash Farajzadehahary using Suno.
+            </p>
+            <p className="about-note" style={{ fontFamily: theme.metaFont, color: theme.dim }}>
+              &copy; {COPYRIGHT_YEARS} Kiarash Farajzadehahary. Released under the KFA
+              Source-Available License 1.0.
+            </p>
           </div>
         </div>
       </div>
@@ -600,6 +623,7 @@ function App() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [buffering, setBuffering] = useState(false);
 
   const current = currentIndex >= 0 && currentIndex < tracks.length ? tracks[currentIndex] : null;
 
@@ -609,6 +633,14 @@ function App() {
   useEffect(() => { if (analyserRef.current) analyserRef.current.smoothingTimeConstant = t.smoothing; }, [t.smoothing]);
   useEffect(() => { if (audioRef.current) audioRef.current.volume = muted ? 0 : volume; }, [volume, muted]);
 
+  // One theme-color tag, kept in step with the resolved theme. A
+  // prefers-color-scheme media variant would follow the OS instead of the theme
+  // the user actually picked here.
+  useEffect(() => {
+    const tag = document.querySelector('meta[name="theme-color"]');
+    if (tag) tag.setAttribute('content', theme.bg);
+  }, [theme.bg]);
+
   // Build a track from a File/Blob
   const trackFromFile = useCallback(async (file, fallbackName) => {
     const tags = await readTags(file);
@@ -617,6 +649,8 @@ function App() {
     return {
       id: ++_trackId,
       url,
+      bundled: false,
+      coverChecked: true,
       title: tags.title || baseName,
       artist: tags.artist || 'Unknown Artist',
       album: tags.album || '',
@@ -625,32 +659,56 @@ function App() {
     };
   }, []);
 
-  // Initial load: try Sound.mp3 in the same folder
+  // Bundled tracks: read the small manifest in music/ and queue what it lists.
+  // Nothing but the JSON is downloaded here. The <audio> element is
+  // preload="metadata", so a track's audio is only fetched once it is played,
+  // and adding more files to music/tracks.json costs nothing on first paint.
   useEffect(() => {
+    let cancelled = false;
     (async () => {
       try {
-        const resp = await fetch('Sound.mp3');
+        const resp = await fetch(`${MUSIC_DIR}tracks.json`);
         if (!resp.ok) return;
-        const blob = await resp.blob();
-        // Give the blob a name property so trackFromFile picks it up
-        const fileLike = new File([blob], 'Sound.mp3', { type: blob.type || 'audio/mpeg' });
-        const tr = await trackFromFile(fileLike);
-        // Try image.jpg as fallback cover
-        if (!tr.cover) {
-          await new Promise((res) => {
-            const img = new Image();
-            img.onload = () => { tr.cover = 'image.jpg'; res(); };
-            img.onerror = () => res();
-            img.src = 'image.jpg';
-          });
-        }
-        setTracks((prev) => prev.length ? prev : [tr]);
+        const data = await resp.json();
+        const bundled = (data.tracks || []).map((entry) => ({
+          id: ++_trackId,
+          url: MUSIC_DIR + entry.file,
+          bundled: true,
+          coverChecked: false,
+          title: entry.title || entry.file.replace(/\.mp3$/i, ''),
+          artist: entry.artist || 'Unknown Artist',
+          album: entry.album || '',
+          year: entry.year || '',
+          cover: null
+        }));
+        if (cancelled || !bundled.length) return;
+        setTracks((prev) => prev.length ? prev : bundled);
         setCurrentIndex((idx) => idx === -1 ? 0 : idx);
       } catch (e) {
-        // Silent — user can add via picker / drag & drop
+        // No manifest, or it does not parse. The queue simply starts empty.
       }
     })();
-  }, [trackFromFile]);
+    return () => { cancelled = true; };
+  }, []);
+
+  // Cover art for a bundled track is pulled only once that track is selected.
+  // jsmediatags reads the ID3 header over HTTP range requests, so this costs a
+  // few tens of KB rather than the whole file.
+  useEffect(() => {
+    if (!current || !current.bundled || current.coverChecked) return;
+    let cancelled = false;
+    const id = current.id;
+    const settle = (patch) => {
+      if (cancelled) return;
+      setTracks((ts) => ts.map((tr) => tr.id === id ? { ...tr, ...patch, coverChecked: true } : tr));
+    };
+    if (!window.jsmediatags) { settle({}); return; }
+    window.jsmediatags.read(new URL(current.url, document.baseURI).href, {
+      onSuccess: (tag) => settle({ cover: pictureToDataUrl(tag.tags && tag.tags.picture) }),
+      onError: () => settle({})
+    });
+    return () => { cancelled = true; };
+  }, [current?.id, current?.bundled, current?.coverChecked]);
 
   const addFiles = useCallback(async (files) => {
     if (!files || !files.length) return;
@@ -671,6 +729,8 @@ function App() {
 
   const removeTrack = useCallback((i) => {
     setTracks((prev) => {
+      const gone = prev[i];
+      if (gone && !gone.bundled) URL.revokeObjectURL(gone.url);
       const next = prev.filter((_, j) => j !== i);
       if (next.length === 0) {
         setCurrentIndex(-1);
@@ -721,8 +781,10 @@ function App() {
     ensureAudioGraph();
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
     if (a.paused) {
+      // HAVE_FUTURE_DATA or better means it can start without a stall.
+      if (a.readyState < 3) setBuffering(true);
       try { await a.play(); setIsPlaying(true); }
-      catch (e) { setError('Click play to start (browser autoplay policy)'); }
+      catch (e) { setBuffering(false); setError('Click play to start (browser autoplay policy)'); }
     } else { a.pause(); setIsPlaying(false); }
   };
 
@@ -761,17 +823,31 @@ function App() {
     };
     const onPlay = () => setIsPlaying(true);
     const onPause = () => setIsPlaying(false);
+    const onWaiting = () => setBuffering(true);
+    const onReady = () => setBuffering(false);
     a.addEventListener('loadedmetadata', onLoaded);
     a.addEventListener('timeupdate', onTime);
     a.addEventListener('ended', onEnd);
     a.addEventListener('play', onPlay);
     a.addEventListener('pause', onPause);
+    a.addEventListener('waiting', onWaiting);
+    a.addEventListener('stalled', onWaiting);
+    a.addEventListener('playing', onReady);
+    a.addEventListener('canplay', onReady);
+    a.addEventListener('emptied', onReady);
+    a.addEventListener('error', onReady);
     return () => {
       a.removeEventListener('loadedmetadata', onLoaded);
       a.removeEventListener('timeupdate', onTime);
       a.removeEventListener('ended', onEnd);
       a.removeEventListener('play', onPlay);
       a.removeEventListener('pause', onPause);
+      a.removeEventListener('waiting', onWaiting);
+      a.removeEventListener('stalled', onWaiting);
+      a.removeEventListener('playing', onReady);
+      a.removeEventListener('canplay', onReady);
+      a.removeEventListener('emptied', onReady);
+      a.removeEventListener('error', onReady);
     };
   }, [scrubbing, repeatMode, currentIndex, tracks.length, shuffle, goNext]);
 
@@ -924,7 +1000,7 @@ function App() {
               <div className="info-top">
                 <div className="np-tag" style={{ fontFamily: theme.metaFont, color: theme.dim }}>
                   <span className="np-dot" style={{ background: isPlaying ? theme.accent : theme.faint }}/>
-                  {isPlaying ? 'NOW PLAYING' : current ? 'PAUSED' : 'EMPTY QUEUE'}
+                  {buffering ? 'LOADING' : isPlaying ? 'NOW PLAYING' : current ? 'PAUSED' : 'EMPTY QUEUE'}
                 </div>
                 <h1 className="title" style={{
                   fontFamily: theme.titleFont, fontWeight: theme.titleWeight,
@@ -946,7 +1022,7 @@ function App() {
               <div className="card-corner">
                 <div className="track-index">
                   <span className="ti-num" style={{ fontFamily: theme.titleFont, color: theme.fg }}>
-                    {currentIndex >= 0 ? String(currentIndex + 1).padStart(2, '0') : '—'}
+                    {currentIndex >= 0 ? String(currentIndex + 1).padStart(2, '0') : '–'}
                   </span>
                   <span className="ti-sep" style={{ color: theme.faint }}>/</span>
                   <span className="ti-total" style={{ fontFamily: theme.metaFont, color: theme.dim }}>
@@ -987,7 +1063,7 @@ function App() {
               {/* Seek */}
               <div className="seek-row">
                 <span className="time" style={{ fontFamily: theme.metaFont, color: theme.dim }}>{fmtTime(currentTime)}</span>
-                <div ref={seekRef} className="seek" onPointerDown={beginScrub} style={{ background: theme.faint }}>
+                <div ref={seekRef} className={`seek ${buffering ? 'buffering' : ''}`} onPointerDown={beginScrub} style={{ background: theme.faint }}>
                   <div className="seek-fill" style={{ width: `${seekPct * 100}%`, background: theme.accent }}/>
                   <div className="seek-knob" style={{ left: `${seekPct * 100}%`, background: theme.fg, boxShadow: `0 0 0 4px ${hexToRgba(theme.accent, 0.25)}` }}/>
                 </div>
@@ -1001,8 +1077,8 @@ function App() {
                 <button className="ctrl-secondary" onClick={goPrev} title="Previous" style={{ color: theme.dim }}><Icon.Prev/></button>
                 <button className="ctrl-primary" onClick={togglePlay}
                   style={{ background: theme.fg, color: theme.bg, borderRadius: theme.name === 'Editorial' ? 0 : 999 }}
-                  title={isPlaying ? 'Pause' : 'Play'}>
-                  {isPlaying ? <Icon.Pause/> : <Icon.Play/>}
+                  title={buffering ? 'Loading' : isPlaying ? 'Pause' : 'Play'}>
+                  {buffering ? <Icon.Spinner/> : isPlaying ? <Icon.Pause/> : <Icon.Play/>}
                 </button>
                 <button className="ctrl-secondary" onClick={goNext} title="Next" style={{ color: theme.dim }}><Icon.Next/></button>
                 <button className={`ctrl-tertiary ${repeatMode > 0 ? 'on' : ''}`}
